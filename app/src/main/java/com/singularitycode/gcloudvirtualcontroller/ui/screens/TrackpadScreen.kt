@@ -1,5 +1,9 @@
 package com.singularitycode.gcloudvirtualcontroller.ui.screens
 
+
+
+
+import android.util.Log
 import android.view.KeyEvent
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -42,6 +46,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -61,6 +66,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -83,10 +89,10 @@ fun TrackpadScreen(
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val context = LocalContext.current
-    val keyboardController_compose = LocalSoftwareKeyboardController.current
+    val softwareKeyboardController = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
     var isKeyboardVisible by remember { mutableStateOf(false) }
-    var textFieldValue by remember { mutableStateOf(TextFieldValue("")) }
+    var textFieldValue by remember { mutableStateOf(TextFieldValue(" ", selection = androidx.compose.ui.text.TextRange(1))) }
 
     var backPressedOnce by remember { mutableStateOf(false) }
 
@@ -106,10 +112,11 @@ fun TrackpadScreen(
         }
     }
 
-    Scaffold { padding ->
+    Scaffold { innerPadding ->
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
+                .padding(innerPadding)
                 .background(if (isDarkTheme) Color.Black else Color.White)
         ) {
             val trackpadRect = with(density) {
@@ -125,35 +132,71 @@ fun TrackpadScreen(
             // Hidden TextField to capture keyboard events
             BasicTextField(
                 value = textFieldValue,
-                onValueChange = {
-                    if (it.text.isNotEmpty()) {
-                        it.text.forEach { char ->
-                            keyboardController?.sendKeyEvent(char.code, true, isAscii = true)
-                            keyboardController?.sendKeyEvent(char.code, false, isAscii = true)
+                onValueChange = { newValue ->
+                    // Avoid unnecessary updates if the value is the same
+                    if (newValue.text == textFieldValue.text && newValue.selection == textFieldValue.selection) return@BasicTextField
+
+                    val newText = newValue.text
+                    if (newText.isEmpty()) {
+                        // 長度變小，代表佔位符被刪除 -> Backspace
+                        keyboardController?.sendControlKey(1)
+                        textFieldValue = TextFieldValue(" ", selection = androidx.compose.ui.text.TextRange(1))
+                    } else if (newText.length > 1) {
+                        // 找出新增的文字
+                        val addedText = if (newText.startsWith(" ")) {
+                            newText.substring(1)
+                        } else if (newText.endsWith(" ")) {
+                            newText.substring(0, newText.length - 1)
+                        } else {
+                            newText.replace(" ", "")
                         }
-                        textFieldValue = TextFieldValue("")
+
+                        if (addedText.isNotEmpty()) {
+                            if (addedText == "\n") {
+                                keyboardController?.sendControlKey(2)
+                            } else {
+                                keyboardController?.sendUnicodeText(addedText)
+                            }
+                        }
+                        textFieldValue = TextFieldValue(" ", selection = androidx.compose.ui.text.TextRange(1))
                     } else {
-                        textFieldValue = it
+                        textFieldValue = newValue
                     }
                 },
                 modifier = Modifier
-                    .size(1.dp)
+                    .size(16.dp) // Slightly larger to help IME calculate cursor positions
+                    .alpha(0f)  // Keep it invisible
                     .focusRequester(focusRequester)
                     .onKeyEvent { keyEvent ->
-                        val isDown = keyEvent.type == KeyEventType.KeyDown
                         val nativeEvent = keyEvent.nativeKeyEvent
-                        val metaState = nativeEvent.metaState
-                        
-                        var modifiers = 0
-                        if (metaState and KeyEvent.META_SHIFT_ON != 0) modifiers = modifiers or (1 shl 0)
-                        if (metaState and KeyEvent.META_CTRL_ON != 0) modifiers = modifiers or (1 shl 1)
-                        if (metaState and KeyEvent.META_ALT_ON != 0) modifiers = modifiers or (1 shl 2)
-                        if (metaState and KeyEvent.META_META_ON != 0) modifiers = modifiers or (1 shl 3)
+                        if (keyEvent.type == KeyEventType.KeyDown) {
+                            Log.d("TrackpadKey", "Key Down: ${nativeEvent.keyCode} (Name: ${KeyEvent.keyCodeToString(nativeEvent.keyCode)})")
+                        }
 
-                        keyboardController?.sendKeyEvent(nativeEvent.keyCode, isDown, modifiers)
+                        if (keyEvent.type != KeyEventType.KeyDown) return@onKeyEvent false
+                        
+                        val controlKeyType = when (nativeEvent.keyCode) {
+                            KeyEvent.KEYCODE_DEL -> 1    // Backspace
+                            KeyEvent.KEYCODE_ENTER -> 2  // Enter
+                            KeyEvent.KEYCODE_TAB -> 3    // Tab
+                            KeyEvent.KEYCODE_ESCAPE -> 4 // Escape
+                            else -> null
+                        }
+
+                        if (controlKeyType != null) {
+                            // 通過特殊控制鍵通道發送 (0x04)
+                            keyboardController?.sendControlKey(controlKeyType)
+                            return@onKeyEvent true // 阻止事件繼續傳播
+                        }
+
                         false
                     },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done)
+                singleLine = false, // 允許換行按鍵出現
+                keyboardOptions = KeyboardOptions(
+                    autoCorrectEnabled = false,
+                    keyboardType = KeyboardType.Password,
+                    imeAction = ImeAction.None
+                )
             )
 
             // Trackpad Overlay (Full Screen)
@@ -166,9 +209,9 @@ fun TrackpadScreen(
                     isKeyboardVisible = !isKeyboardVisible
                     if (isKeyboardVisible) {
                         focusRequester.requestFocus()
-                        keyboardController_compose?.show()
+                        softwareKeyboardController?.show()
                     } else {
-                        keyboardController_compose?.hide()
+                        softwareKeyboardController?.hide()
                     }
                 }
             )
@@ -191,7 +234,6 @@ fun TrackpadScreen(
                 }
             }
         }
-        val _ignore = padding
     }
 }
 
