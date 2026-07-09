@@ -43,8 +43,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import android.widget.Toast
 import com.singularitycode.gcloudvirtualcontroller.data.DeviceDao
 import com.singularitycode.gcloudvirtualcontroller.data.DeviceEntity
 import kotlinx.coroutines.launch
@@ -61,6 +63,7 @@ fun DeviceSelectionScreen(
     var showAddDialog by remember { mutableStateOf(false) }
     var deviceToEdit by remember { mutableStateOf<DeviceEntity?>(null) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     Scaffold(
         topBar = {
@@ -126,9 +129,13 @@ fun DeviceSelectionScreen(
                 onDismiss = { showAddDialog = false },
                 onConfirm = { name, ip, port ->
                     scope.launch {
-                        deviceDao.insert(DeviceEntity(name = name, ip = ip, port = port))
+                        if (deviceDao.exists(ip, port)) {
+                            Toast.makeText(context, "Device with this IP and Port already exists", Toast.LENGTH_SHORT).show()
+                        } else {
+                            deviceDao.insert(DeviceEntity(name = name, ip = ip, port = port))
+                            showAddDialog = false
+                        }
                     }
-                    showAddDialog = false
                 }
             )
         }
@@ -144,9 +151,13 @@ fun DeviceSelectionScreen(
                 onDismiss = { deviceToEdit = null },
                 onConfirm = { name, ip, port ->
                     scope.launch {
-                        deviceDao.insert(currentDevice.copy(name = name, ip = ip, port = port))
+                        if (deviceDao.existsExcludingId(ip, port, currentDevice.id)) {
+                            Toast.makeText(context, "Another device with this IP and Port already exists", Toast.LENGTH_SHORT).show()
+                        } else {
+                            deviceDao.insert(currentDevice.copy(name = name, ip = ip, port = port))
+                            deviceToEdit = null
+                        }
                     }
-                    deviceToEdit = null
                 },
                 onDelete = {
                     scope.launch {

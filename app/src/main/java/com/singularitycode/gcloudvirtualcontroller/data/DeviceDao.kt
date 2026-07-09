@@ -15,6 +15,12 @@ interface DeviceDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(device: DeviceEntity)
 
+    @Query("SELECT EXISTS(SELECT 1 FROM devices WHERE ip = :ip AND port = :port LIMIT 1)")
+    suspend fun exists(ip: String, port: Int): Boolean
+
+    @Query("SELECT EXISTS(SELECT 1 FROM devices WHERE ip = :ip AND port = :port AND id != :id LIMIT 1)")
+    suspend fun existsExcludingId(ip: String, port: Int, id: Int): Boolean
+
     @Delete
     suspend fun delete(device: DeviceEntity)
 }
