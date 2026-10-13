@@ -1,9 +1,6 @@
 package com.singularitycode.gcloudvirtualcontroller.ui.screens
 
-
-
-
-import android.util.Log
+import android.os.SystemClock
 import android.view.KeyEvent
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -43,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,6 +62,7 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -74,9 +73,13 @@ import androidx.compose.ui.unit.sp
 import com.singularitycode.gcloudvirtualcontroller.GamepadState
 import com.singularitycode.gcloudvirtualcontroller.KeyboardRemoteController
 import com.singularitycode.gcloudvirtualcontroller.MouseRemoteController
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 @Composable
 fun TrackpadScreen(
@@ -92,7 +95,7 @@ fun TrackpadScreen(
     val softwareKeyboardController = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
     var isKeyboardVisible by remember { mutableStateOf(false) }
-    var textFieldValue by remember { mutableStateOf(TextFieldValue(" ", selection = androidx.compose.ui.text.TextRange(1))) }
+    var textFieldValue by remember { mutableStateOf(TextFieldValue(" ", selection = TextRange(1))) }
 
     var backPressedOnce by remember { mutableStateOf(false) }
 
@@ -107,7 +110,7 @@ fun TrackpadScreen(
 
     LaunchedEffect(backPressedOnce) {
         if (backPressedOnce) {
-            delay(2000)
+            delay(2.seconds)
             backPressedOnce = false
         }
     }
@@ -119,14 +122,16 @@ fun TrackpadScreen(
                 .padding(innerPadding)
                 .background(if (isDarkTheme) Color.Black else Color.White)
         ) {
-            val trackpadRect = with(density) {
-                val paddingPx = 16.dp.toPx()
-                Rect(
-                    left = paddingPx,
-                    top = paddingPx,
-                    right = maxWidth.toPx() - paddingPx,
-                    bottom = maxHeight.toPx() - paddingPx
-                )
+            val trackpadRect = remember(maxWidth, maxHeight, density) {
+                with(density) {
+                    val paddingPx = 16.dp.toPx()
+                    Rect(
+                        left = paddingPx,
+                        top = paddingPx,
+                        right = maxWidth.toPx() - paddingPx,
+                        bottom = maxHeight.toPx() - paddingPx
+                    )
+                }
             }
 
             // Hidden TextField to capture keyboard events
@@ -140,15 +145,13 @@ fun TrackpadScreen(
                     if (newText.isEmpty()) {
                         // 長度變小，代表佔位符被刪除 -> Backspace
                         keyboardController?.sendControlKey(1)
-                        textFieldValue = TextFieldValue(" ", selection = androidx.compose.ui.text.TextRange(1))
+                        textFieldValue = TextFieldValue(" ", selection = TextRange(1))
                     } else if (newText.length > 1) {
                         // 找出新增的文字
-                        val addedText = if (newText.startsWith(" ")) {
-                            newText.substring(1)
-                        } else if (newText.endsWith(" ")) {
-                            newText.substring(0, newText.length - 1)
-                        } else {
-                            newText.replace(" ", "")
+                        val addedText = when {
+                            newText.startsWith(" ") -> newText.substring(1)
+                            newText.endsWith(" ") -> newText.substring(0, newText.length - 1)
+                            else -> newText.replace(" ", "")
                         }
 
                         if (addedText.isNotEmpty()) {
@@ -158,7 +161,7 @@ fun TrackpadScreen(
                                 keyboardController?.sendUnicodeText(addedText)
                             }
                         }
-                        textFieldValue = TextFieldValue(" ", selection = androidx.compose.ui.text.TextRange(1))
+                        textFieldValue = TextFieldValue(" ", selection = TextRange(1))
                     } else {
                         textFieldValue = newValue
                     }
@@ -168,14 +171,9 @@ fun TrackpadScreen(
                     .alpha(0f)  // Keep it invisible
                     .focusRequester(focusRequester)
                     .onKeyEvent { keyEvent ->
-                        val nativeEvent = keyEvent.nativeKeyEvent
-                        if (keyEvent.type == KeyEventType.KeyDown) {
-                            Log.d("TrackpadKey", "Key Down: ${nativeEvent.keyCode} (Name: ${KeyEvent.keyCodeToString(nativeEvent.keyCode)})")
-                        }
-
                         if (keyEvent.type != KeyEventType.KeyDown) return@onKeyEvent false
-                        
-                        val controlKeyType = when (nativeEvent.keyCode) {
+
+                        val controlKeyType = when (keyEvent.nativeKeyEvent.keyCode) {
                             KeyEvent.KEYCODE_DEL -> 1    // Backspace
                             KeyEvent.KEYCODE_ENTER -> 2  // Enter
                             KeyEvent.KEYCODE_TAB -> 3    // Tab
@@ -225,7 +223,7 @@ fun TrackpadScreen(
                     Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
                         GamepadLeftPanel(gamepadState, isDarkTheme)
                     }
-                    
+
                     Spacer(modifier = Modifier.weight(1.2f))
 
                     Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
@@ -242,22 +240,29 @@ fun TrackpadOverlay(
     mouseController: MouseRemoteController?,
     trackpadRect: Rect,
     isDarkTheme: Boolean,
-    scope: kotlinx.coroutines.CoroutineScope,
+    scope: CoroutineScope,
     onThreeFingerTap: () -> Unit
 ) {
+    val currentOnThreeFingerTap by rememberUpdatedState(onThreeFingerTap)
+    val currentMouseController by rememberUpdatedState(mouseController)
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInput(Unit) {
-                var lastTapUpTime = 0L
+            .pointerInput(trackpadRect) {
+                var lastTapUpUptime = 0L
                 val dragDoubleTapTimeout = 200L
+                var tapJob: Job? = null
+
+                var scrollAccumulatorX = 0f
+                var scrollAccumulatorY = 0f
 
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     if (!trackpadRect.contains(down.position)) return@awaitEachGesture
 
-                    val downTime = System.currentTimeMillis()
-                    val isDragCandidate = (downTime - lastTapUpTime) < dragDoubleTapTimeout
+                    val downUptime = SystemClock.uptimeMillis()
+                    val isDragCandidate = (downUptime - lastTapUpUptime) < dragDoubleTapTimeout
 
                     var maxPointers = 1
                     var cumulativeMovement = 0f
@@ -269,35 +274,42 @@ fun TrackpadOverlay(
                         val activeChanges = event.changes.filter { it.pressed }
                         if (activeChanges.isEmpty()) break
 
-                        maxPointers = maxOf(maxOf(maxPointers, event.changes.size), activeChanges.size)
+                        maxPointers = maxOf(maxPointers, event.changes.size)
                         val movement = event.changes.sumOf { it.positionChange().getDistance().toDouble() }.toFloat()
                         cumulativeMovement += movement
 
                         if (activeChanges.size > 1 && isDragging) {
                             isDragging = false
-                            mouseController?.leftClick(false)
+                            currentMouseController?.leftClick(false)
                         }
 
                         if (activeChanges.size == 2) {
                             isScrollLocked = true
-                            val dy = activeChanges.map { it.positionChange().y }.average().toInt()
-                            val dx = activeChanges.map { it.positionChange().x }.average().toInt()
-                            if (dy != 0 || dx != 0) {
-                                mouseController?.scroll(
-                                    deltaY = (-dy).coerceIn(-127, 127).toByte(),
-                                    deltaX = (-dx).coerceIn(-127, 127).toByte()
+                            val count = activeChanges.size.toFloat()
+                            scrollAccumulatorY += activeChanges.sumOf { it.positionChange().y.toDouble() }.toFloat() / count
+                            scrollAccumulatorX += activeChanges.sumOf { it.positionChange().x.toDouble() }.toFloat() / count
+
+                            val sendY = scrollAccumulatorY.toInt()
+                            val sendX = scrollAccumulatorX.toInt()
+
+                            if (sendY != 0 || sendX != 0) {
+                                scrollAccumulatorY -= sendY
+                                scrollAccumulatorX -= sendX
+                                currentMouseController?.scroll(
+                                    deltaY = (-sendY).coerceIn(-127, 127).toByte(),
+                                    deltaX = (-sendX).coerceIn(-127, 127).toByte()
                                 )
                             }
                         } else if (activeChanges.size == 1 && !isScrollLocked) {
                             if (isDragCandidate && cumulativeMovement > 10f && !isDragging) {
                                 isDragging = true
-                                mouseController?.leftClick(true)
+                                currentMouseController?.leftClick(true)
                             }
-                            
+
                             val change = activeChanges[0]
                             val dragAmount = change.positionChange()
                             if (dragAmount != Offset.Zero) {
-                                mouseController?.mouseMove(
+                                currentMouseController?.mouseMove(
                                     deltaX = dragAmount.x,
                                     deltaY = dragAmount.y
                                 )
@@ -306,30 +318,34 @@ fun TrackpadOverlay(
                         event.changes.forEach { it.consume() }
                     }
 
+                    scrollAccumulatorX = 0f
+                    scrollAccumulatorY = 0f
+
                     if (isDragging) {
-                        mouseController?.leftClick(false)
-                        lastTapUpTime = 0
+                        currentMouseController?.leftClick(false)
+                        lastTapUpUptime = 0L
                     } else if (cumulativeMovement < 10f) {
-                        lastTapUpTime = System.currentTimeMillis()
-                        scope.launch {
+                        lastTapUpUptime = SystemClock.uptimeMillis()
+                        tapJob?.cancel()
+                        tapJob = scope.launch {
                             when (maxPointers) {
                                 1 -> {
-                                    mouseController?.leftClick(true)
-                                    delay(50)
-                                    mouseController?.leftClick(false)
+                                    currentMouseController?.leftClick(true)
+                                    delay(50.milliseconds)
+                                    currentMouseController?.leftClick(false)
                                 }
                                 2 -> {
-                                    mouseController?.rightClick(true)
-                                    delay(50)
-                                    mouseController?.rightClick(false)
+                                    currentMouseController?.rightClick(true)
+                                    delay(50.milliseconds)
+                                    currentMouseController?.rightClick(false)
                                 }
                                 3 -> {
-                                    onThreeFingerTap()
+                                    currentOnThreeFingerTap()
                                 }
                             }
                         }
                     } else {
-                        lastTapUpTime = 0
+                        lastTapUpUptime = 0L
                     }
                 }
             },
@@ -337,7 +353,7 @@ fun TrackpadOverlay(
     ) {
         val strokeColor = if (isDarkTheme) Color.DarkGray else Color.LightGray
         val textColor = if (isDarkTheme) Color.Gray else Color.DarkGray
-        
+
         Canvas(modifier = Modifier.fillMaxSize().padding(16.dp)) {
             drawRoundRect(
                 color = strokeColor,
@@ -427,7 +443,7 @@ fun DpadView(dpad: Offset, tint: Color) {
     Box(modifier = Modifier.size(80.dp), contentAlignment = Alignment.Center) {
         Box(modifier = Modifier.size(width = 80.dp, height = 24.dp).background(tint.copy(alpha = 0.1f), RoundedCornerShape(4.dp)))
         Box(modifier = Modifier.size(width = 24.dp, height = 80.dp).background(tint.copy(alpha = 0.1f), RoundedCornerShape(4.dp)))
-        
+
         if (dpad.y < -0.5f) Box(modifier = Modifier.size(24.dp).offset(y = (-28).dp).background(tint, RoundedCornerShape(4.dp)))
         if (dpad.y > 0.5f) Box(modifier = Modifier.size(24.dp).offset(y = 28.dp).background(tint, RoundedCornerShape(4.dp)))
         if (dpad.x < -0.5f) Box(modifier = Modifier.size(24.dp).offset(x = (-28).dp).background(tint, RoundedCornerShape(4.dp)))
@@ -448,11 +464,11 @@ fun JoystickView(label: String, axis: Offset, isPressed: Boolean, tint: Color) {
         ) {
             Box(
                 modifier = Modifier
-                    .offset { 
+                    .offset {
                         IntOffset(
-                            (axis.x * with(density) { 18.dp.toPx() }).roundToInt(), 
+                            (axis.x * with(density) { 18.dp.toPx() }).roundToInt(),
                             (axis.y * with(density) { 18.dp.toPx() }).roundToInt()
-                        ) 
+                        )
                     }
                     .size(28.dp)
                     .background(if (isPressed) tint else tint.copy(alpha = 0.4f), CircleShape)
@@ -490,7 +506,7 @@ fun InstructionRow(icon: ImageVector, text: String, color: Color) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Start,
-        modifier = Modifier.width(250.dp)
+        modifier = Modifier.padding(horizontal = 24.dp)
     ) {
         Icon(
             imageVector = icon,

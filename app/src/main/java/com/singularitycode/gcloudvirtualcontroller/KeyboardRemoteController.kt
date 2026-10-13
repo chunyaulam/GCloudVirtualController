@@ -12,7 +12,7 @@ class KeyboardRemoteController(private val udpManager: UdpSenderManager) {
      */
     fun sendUnicodeText(text: String) {
         if (text.isEmpty()) return
-        Log.d("KeyboardRemote", "Sending Unicode Text: $text")
+        // Log.d("KeyboardRemote", "Sending Unicode Text: $text")
         val textBytes = text.toByteArray(Charsets.UTF_8)
         val buffer = ByteBuffer.allocate(1 + textBytes.size)
         buffer.put(0x03.toByte())
@@ -34,7 +34,7 @@ class KeyboardRemoteController(private val udpManager: UdpSenderManager) {
             4 -> "Escape"
             else -> "Unknown($type)"
         }
-        Log.d("KeyboardRemote", "Sending Control Key: $keyName")
+        // Log.d("KeyboardRemote", "Sending Control Key: $keyName")
         val buffer = ByteBuffer.allocate(2)
         buffer.put(0x04.toByte())
 
